@@ -28,7 +28,7 @@ PAYEE_NAME = "apna Tool"
 PAY_AMOUNT = 10
 UPI_NOTE = "Dukandar Tool 6 month unlock"
 FREE_TRIES = 10  
-QR_IMAGE_PATH = "QR_code.jpga"  # <- app ke same folder me QR PNG rakho
+QR_IMAGE_PATH = "QR_code.png"  # <- app ke same folder me QR image rakho (png/jpg supported via fallback)
 ADMIN_UNLOCK_CODE = "CHANGE_ME_UNLOCK_2026"  # <- payment receive verify karne ke baad user ko yahi code do
 STATE_FILE = Path.home() / ".dukandar_tool_state.json"
 
@@ -393,15 +393,23 @@ class App(tk.Tk):
             justify="center",
         ).pack(pady=10)
 
-        qr_path = Path(__file__).with_name(QR_IMAGE_PATH)
-        if qr_path.exists():
+        qr_base = Path(__file__).with_name(QR_IMAGE_PATH)
+        qr_candidates = [qr_base]
+        # Common fallback names/extensions, so a minor filename mismatch doesn't break unlock UI.
+        for name in ("QR_code.jpg", "QR_code.jpeg", "QR_code.png"):
+            p = Path(__file__).with_name(name)
+            if p not in qr_candidates:
+                qr_candidates.append(p)
+        qr_path = next((p for p in qr_candidates if p.exists()), None)
+
+        if qr_path:
             try:
                 self.qr_img = tk.PhotoImage(file=str(qr_path))
                 ttk.Label(popup, image=self.qr_img).pack(pady=6)
             except Exception:
                 ttk.Label(popup, text="QR image load nahi hua. Neeche payment link use karein.").pack(pady=6)
         else:
-            ttk.Label(popup, text=f"QR file nahi mili: {qr_path.name}").pack(pady=6)
+            ttk.Label(popup, text=f"QR file nahi mili: {qr_base.name}").pack(pady=6)
 
         ttk.Label(popup, text=f"UPI: {UPI_ID}").pack(pady=4)
         ttk.Button(popup, text="Open UPI Payment", command=self._open_upi_intent).pack(pady=4)
