@@ -1,1 +1,0 @@
-# dukandar-shop-tool
