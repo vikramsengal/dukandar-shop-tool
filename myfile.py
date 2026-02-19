@@ -21,8 +21,8 @@ except Exception:
 
 
 APP_TITLE = "Dukandar GST Statement Tool"
-PAYMENT_LINK = "https://rzp.io/l/YOUR_10RS_6MONTH_LINK"   # <- apna Razorpay/Paytm payment link
-DOWNLOAD_LINK = "https://yourdomain.com/downloads/dukandar-tool.exe"  # <- apka exe download link
+PAYMENT_LINK = "https://razorpay.me/@vikrambhaiparabatabhaisengal"   # <- apna Razorpay/Paytm payment link
+DOWNLOAD_LINK = "https://github.com/vikramsengal/dukandar-shop-tool/raw/main/dist/myfile.exe"  # <- direct GitHub download link
 UPI_ID = "sengalvikram004-2@oksbi"  # <- apni UPI ID
 PAYEE_NAME = "apna Tool"
 PAY_AMOUNT = 10
