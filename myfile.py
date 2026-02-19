@@ -7,6 +7,7 @@ import sys
 import tempfile
 import traceback
 import webbrowser
+from urllib.request import Request, urlopen
 from urllib.request import urlopen
 from urllib.parse import urlencode
 from datetime import datetime
@@ -48,6 +49,8 @@ QR_IMAGE_PATH = "QR_code.png"  # <- app ke same folder me QR image rakho (png/jp
 ADMIN_UNLOCK_CODE = "CHANGE_ME_UNLOCK_2026"  # <- payment receive verify karne ke baad user ko yahi code do
 STATE_FILE = Path.home() / ".dukandar_tool_state.json"
 LOG_FILE = Path.home() / ".dukandar_tool_error.log"
+AUDIT_FILE = Path.home() / ".dukandar_tool_audit.log"
+BACKUP_DIR = Path.home() / ".dukandar_tool_backups"
 APP_VERSION = "1.2.0"
 VERSION_URL = "https://raw.githubusercontent.com/vikramsengal/dukandar-shop-tool/main/VERSION.txt"
 
@@ -61,6 +64,17 @@ CATEGORY_RULES = {
     "Shopping": ["amazon", "flipkart", "store", "mart"],
     "Refund": ["refund", "reversal", "chargeback"],
     "Tax": ["gst", "tax", "tds", "income tax"],
+}
+CATEGORY_GST_SUGGEST = {
+    "Rent": 18.0,
+    "Salary": 0.0,
+    "Utilities": 18.0,
+    "Food": 5.0,
+    "Transfer": 0.0,
+    "Shopping": 18.0,
+    "Refund": 0.0,
+    "Tax": 0.0,
+    "Other": 18.0,
 }
 
 
@@ -556,6 +570,161 @@ def detect_suspicious(transactions):
         if by_day_type_amt.get((day, other, amt), 0) > 0 and count > 0:
             alerts.append(f"Round-trip pattern on {day} for {money(amt)}")
     return sorted(set(alerts))
+
+
+def extract_invoice_refs(text):
+    refs = re.findall(r"\b(?:inv|invoice|bill)[\s\-#:]*([a-z0-9\-_/]{3,})\b", (text or "").lower())
+    return sorted(set(refs))
+
+
+def party_from_description(text):
+    txt = (text or "").strip()
+    if not txt:
+        return "Unknown"
+    parts = re.split(r"[|,/;-]", txt)
+    party = parts[0].strip()
+    party = re.sub(r"\s+", " ", party)
+    return party[:60] if party else "Unknown"
+
+
+def build_party_ledger(transactions):
+    ledger = defaultdict(lambda: {"debit": 0.0, "credit": 0.0, "count": 0})
+    for tx in transactions:
+        party = party_from_description(tx.get("description"))
+        ledger[party]["debit"] += float(tx.get("debit", 0.0))
+        ledger[party]["credit"] += float(tx.get("credit", 0.0))
+        ledger[party]["count"] += 1
+    out = []
+    for party, v in ledger.items():
+        out.append(
+            {
+                "party": party,
+                "debit": v["debit"],
+                "credit": v["credit"],
+                "count": v["count"],
+                "outstanding": v["credit"] - v["debit"],
+            }
+        )
+    return sorted(out, key=lambda x: abs(x["outstanding"]), reverse=True)
+
+
+def suggest_gst_rate_from_categories(category_summary):
+    total = sum(float(v) for v in category_summary.values()) or 1.0
+    weighted = 0.0
+    for cat, amt in category_summary.items():
+        weighted += float(amt) * CATEGORY_GST_SUGGEST.get(cat, 18.0)
+    return round(weighted / total, 2)
+
+
+def build_gstr_summary(total_debit, total_credit, gst_rate, interstate):
+    taxable = max(total_credit - total_debit, 0.0)
+    gst = taxable * (gst_rate / 100.0)
+    cgst, sgst, igst = gst_split(gst, interstate)
+    return {
+        "gstr1_estimated_taxable_outward": taxable,
+        "gstr3b_3_1_a_taxable": taxable,
+        "gstr3b_3_1_a_igst": igst,
+        "gstr3b_3_1_a_cgst": cgst,
+        "gstr3b_3_1_a_sgst": sgst,
+        "net_itc_assumed": 0.0,
+        "net_payable_estimated": gst,
+    }
+
+
+def score_anomalies(transactions):
+    scored = []
+    for tx in transactions:
+        score = 0
+        reasons = []
+        amt = float(tx.get("amount", 0.0))
+        desc = (tx.get("description") or "").lower()
+        if amt >= 100000:
+            score += 40
+            reasons.append("High amount")
+        if "cash" in desc:
+            score += 20
+            reasons.append("Cash keyword")
+        if tx.get("date") == "Unknown Date":
+            score += 15
+            reasons.append("Unknown date")
+        if len(desc.strip()) < 4:
+            score += 10
+            reasons.append("Weak narration")
+        scored.append(
+            {
+                "date": tx.get("date"),
+                "type": tx.get("type"),
+                "amount": amt,
+                "description": tx.get("description", ""),
+                "score": min(score, 100),
+                "reasons": ", ".join(reasons) if reasons else "Normal",
+            }
+        )
+    return sorted(scored, key=lambda x: x["score"], reverse=True)
+
+
+def parse_invoice_csv(file_path):
+    invoices = []
+    total = 0.0
+    with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        amount_col = guess_column(reader.fieldnames or [], ["amount", "total", "value", "net"])
+        no_col = guess_column(reader.fieldnames or [], ["invoice no", "invoice", "bill no", "inv"])
+        date_col = guess_column(reader.fieldnames or [], ["date", "invoice date"])
+        party_col = guess_column(reader.fieldnames or [], ["party", "customer", "vendor", "name"])
+        if not amount_col:
+            raise ValueError("Invoice CSV me amount column required hai.")
+        for row in reader:
+            amt = clean_amount(row.get(amount_col, ""))
+            if amt <= 0:
+                continue
+            total += amt
+            invoices.append(
+                {
+                    "invoice_no": str(row.get(no_col, "")).strip() if no_col else "",
+                    "date": normalize_date(row.get(date_col, "")) if date_col else None,
+                    "party": str(row.get(party_col, "")).strip() if party_col else "",
+                    "amount": amt,
+                }
+            )
+    return invoices, total
+
+
+def match_invoices_with_transactions(invoices, transactions):
+    matches = []
+    unmatched = []
+    tx_by_amount = defaultdict(list)
+    for tx in transactions:
+        tx_by_amount[round(float(tx.get("amount", 0.0)), 2)].append(tx)
+    for inv in invoices:
+        amount_key = round(float(inv.get("amount", 0.0)), 2)
+        candidates = tx_by_amount.get(amount_key, [])
+        invoice_refs = set(extract_invoice_refs(inv.get("invoice_no", "")))
+        picked = None
+        for tx in candidates:
+            tx_desc = (tx.get("description") or "").lower()
+            if invoice_refs and any(ref in tx_desc for ref in invoice_refs):
+                picked = tx
+                break
+        if picked is None and candidates:
+            picked = candidates[0]
+        if picked:
+            matches.append({"invoice": inv, "transaction": picked})
+        else:
+            unmatched.append(inv)
+    return matches, unmatched
+
+
+def cloud_sync(url, token, payload):
+    if not url:
+        return "Skipped"
+    data = json.dumps(payload).encode("utf-8")
+    req = Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urlopen(req, timeout=8) as r:
+        return f"HTTP {r.status}"
 
 
 def money(x):
