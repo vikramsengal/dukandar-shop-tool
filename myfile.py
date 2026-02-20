@@ -8,7 +8,6 @@ import tempfile
 import traceback
 import webbrowser
 from urllib.request import Request, urlopen
-from urllib.request import urlopen
 from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
@@ -43,7 +42,7 @@ DOWNLOAD_LINK = "https://github.com/vikramsengal/dukandar-shop-tool/raw/main/dis
 UPI_ID = "sengalvikram004-2@oksbi"  # <- apni UPI ID
 PAYEE_NAME = "apna Tool"
 PAY_AMOUNT = 10
-UPI_NOTE = "Dukandar Tool 6 month unlock"
+UPI_NOTE = "Dukandar Tool 1 month unlock"
 FREE_TRIES = 10  
 QR_IMAGE_PATH = "QR_code.png"  # <- app ke same folder me QR image rakho (png/jpg supported via fallback)
 ADMIN_UNLOCK_CODE = "CHANGE_ME_UNLOCK_2026"  # <- payment receive verify karne ke baad user ko yahi code do
@@ -900,50 +899,6 @@ class App(tk.Tk):
             log_error(e)
             messagebox.showerror("Update Check Failed", str(e))
 
-    def export_json(self):
-        if not self.filtered_transactions:
-            messagebox.showwarning("Warning", "Pehle Analyze karo.")
-            return
-        out_path = os.path.join(tempfile.gettempdir(), f"gst_data_{int(datetime.now().timestamp())}.json")
-        payload = {
-            "version": APP_VERSION,
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "summary": {
-                "rows_count": self.rows_count,
-                "total_debit": self.total_debit,
-                "total_credit": self.total_credit,
-                "detected_bank": self.detected_bank,
-                "detected_format": self.detected_format,
-                "detect_confidence": self.detected_confidence,
-                "daily": self.daily_summary,
-                "monthly": self.monthly_summary,
-                "categories": self.category_summary,
-                "duplicates_count": len(self.duplicates),
-                "alerts": self.alerts,
-                "sales_total": self.sales_total,
-                "reconciliation_gap": self.reco_gap,
-            },
-            "transactions": self.filtered_transactions,
-        }
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        webbrowser.open(out_path)
-        self.status.set(f"JSON export generated: {out_path}")
-
-    def export_csv(self):
-        if not self.filtered_transactions:
-            messagebox.showwarning("Warning", "Pehle Analyze karo.")
-            return
-        out_path = os.path.join(tempfile.gettempdir(), f"gst_transactions_{int(datetime.now().timestamp())}.csv")
-        fields = ["date", "type", "amount", "debit", "credit", "category", "description"]
-        with open(out_path, "w", encoding="utf-8", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fields)
-            w.writeheader()
-            for tx in self.filtered_transactions:
-                w.writerow({k: tx.get(k, "") for k in fields})
-        webbrowser.open(out_path)
-        self.status.set(f"CSV export generated: {out_path}")
-
     def _build_ui(self):
         top = ttk.Frame(self, padding=12)
         top.pack(fill="x")
@@ -1001,13 +956,11 @@ class App(tk.Tk):
         self.analyze_btn.pack(side="left", padx=4)
         self.report_btn = ttk.Button(btns, text="Generate HTML Report", command=self.generate_html_report)
         self.report_btn.pack(side="left", padx=4)
-        ttk.Button(btns, text="Export CSV", command=self.export_csv).pack(side="left", padx=4)
-        ttk.Button(btns, text="Export JSON", command=self.export_json).pack(side="left", padx=4)
         ttk.Button(btns, text="Check Updates", command=self.check_updates).pack(side="left", padx=4)
         ttk.Button(btns, text="Open Logs", command=self.open_log_file).pack(side="left", padx=4)
         self.unlock_btn = ttk.Button(btns, text="Unlock (Pay ₹10)", command=self.show_payment_popup)
         self.unlock_btn.pack(side="left", padx=4)
-        ttk.Button(btns, text="Open Payment Link (₹10 / 6 months)", command=lambda: webbrowser.open(PAYMENT_LINK)).pack(side="right", padx=4)
+        ttk.Button(btns, text="Open Payment Link (₹10 / month)", command=lambda: webbrowser.open(PAYMENT_LINK)).pack(side="right", padx=4)
         ttk.Button(btns, text="Open Download Link", command=lambda: webbrowser.open(DOWNLOAD_LINK)).pack(side="right", padx=4)
 
         self.tree = ttk.Treeview(self, columns=("date", "metric", "value"), show="headings", height=18)
