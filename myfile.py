@@ -11,9 +11,6 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 from datetime import datetime
 from pathlib import Path
-from collections import defaultdict
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
 
 try:
     import pdfplumber
@@ -35,6 +32,7 @@ else:
         elif Path(default_win_tess).exists():
             pytesseract.pytesseract.tesseract_cmd = default_win_tess
 
+from collections import defaultdict
 
 APP_TITLE = "Dukandar GST Statement Tool"
 PAYMENT_LINK = "https://razorpay.me/@vikrambhaiparabatabhaisengal"   # <- apna Razorpay/Paytm payment link
@@ -793,6 +791,13 @@ def run_cli_mode():
             print(f"Error: {e}\n")
 
 
+# ==============================================================================
+# Desktop GUI (Tkinter) - Isko condition me daala hai taaki Kivy ise skip kar de
+# ==============================================================================
+if not is_android_runtime():
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -817,6 +822,7 @@ class App(tk.Tk):
         self.sales_total = 0.0
         self.sales_monthly = {}
         self.reco_gap = 0.0
+        self.party_ledger = []
         self.state = load_state()
         self.used_tries = max(0, int(self.state.get("used_tries", 0)))
         self.paid_unlocked = bool(self.state.get("paid_unlocked", False))
@@ -963,14 +969,34 @@ class App(tk.Tk):
         ttk.Button(btns, text="Open Payment Link (₹10 / month)", command=lambda: webbrowser.open(PAYMENT_LINK)).pack(side="right", padx=4)
         ttk.Button(btns, text="Open Download Link", command=lambda: webbrowser.open(DOWNLOAD_LINK)).pack(side="right", padx=4)
 
-        self.tree = ttk.Treeview(self, columns=("date", "metric", "value"), show="headings", height=18)
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill="both", expand=True, padx=12, pady=8)
+
+        summary_frame = ttk.Frame(notebook)
+        notebook.add(summary_frame, text="Summary & Breakdown")
+
+        self.tree = ttk.Treeview(summary_frame, columns=("date", "metric", "value"), show="headings", height=18)
         self.tree.heading("date", text="Date")
         self.tree.heading("metric", text="Metric")
         self.tree.heading("value", text="Value")
         self.tree.column("date", width=180, anchor="w")
         self.tree.column("metric", width=280, anchor="w")
         self.tree.column("value", width=390, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=12, pady=8)
+        self.tree.pack(fill="both", expand=True)
+
+        party_frame = ttk.Frame(notebook)
+        notebook.add(party_frame, text="Party Ledger")
+
+        self.party_tree = ttk.Treeview(party_frame, columns=("party", "debit", "credit", "outstanding"), show="headings")
+        self.party_tree.heading("party", text="Party/Customer")
+        self.party_tree.heading("debit", text="Total Paid (Debit)")
+        self.party_tree.heading("credit", text="Total Received (Credit)")
+        self.party_tree.heading("outstanding", text="Outstanding (Credit - Debit)")
+        self.party_tree.column("party", width=350, anchor="w")
+        self.party_tree.column("debit", width=150, anchor="e")
+        self.party_tree.column("credit", width=150, anchor="e")
+        self.party_tree.column("outstanding", width=200, anchor="e")
+        self.party_tree.pack(fill="both", expand=True)
 
         self.status = tk.StringVar(value="Ready")
         ttk.Label(self, textvariable=self.status, anchor="w").pack(fill="x", padx=12, pady=(0, 10))
@@ -1144,6 +1170,7 @@ class App(tk.Tk):
             )
             self.duplicates = detect_duplicates(self.filtered_transactions)
             self.alerts = detect_suspicious(self.filtered_transactions)
+            self.party_ledger = build_party_ledger(self.filtered_transactions)
             self.sales_total = 0.0
             self.sales_monthly = {}
             self.reco_gap = 0.0
@@ -1165,6 +1192,7 @@ class App(tk.Tk):
             cgst, sgst, igst = gst_split(gst, bool(self.interstate.get()))
 
             self.tree.delete(*self.tree.get_children())
+            self.party_tree.delete(*self.party_tree.get_children())
             rows = [
                 ("-", "File", path),
                 ("-", "Detected Bank", self.detected_bank),
@@ -1250,6 +1278,19 @@ class App(tk.Tk):
                 self.tree.insert("", "end", values=("-", "Suspicious Alerts", ""))
                 for a in self.alerts[:12]:
                     self.tree.insert("", "end", values=("-", "Alert", a))
+
+            for item in self.party_ledger:
+                outstanding = item['outstanding']
+                vals = (
+                    item['party'],
+                    money(item['debit']),
+                    money(item['credit']),
+                    money(outstanding)
+                )
+                tags = ('positive_balance',) if outstanding > 0 else ('negative_balance',) if outstanding < 0 else ()
+                self.party_tree.insert("", "end", values=vals, tags=tags)
+            self.party_tree.tag_configure('positive_balance', foreground='green')
+            self.party_tree.tag_configure('negative_balance', foreground='red')
 
             self._consume_try()
             self.status.set("Analysis complete.")
@@ -1363,10 +1404,18 @@ th{{background:#f1f5f9}}
         webbrowser.open(out_path)
         self.status.set(f"HTML report generated: {out_path}")
 
-
 if __name__ == "__main__":
     if is_android_runtime():
         run_cli_mode()
     else:
+        app = App()
+        app.mainloop()
+
+if __name__ == "__main__":
+    if is_android_runtime():
+        # Yeh Android/Terminal ke liye hai
+        run_cli_mode()
+    else:
+        # Yeh Desktop (Windows, etc.) ke liye hai
         app = App()
         app.mainloop()
